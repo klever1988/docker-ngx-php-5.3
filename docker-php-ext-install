@@ -39,7 +39,7 @@ for ext in "${exts[@]}"; do
     (
         cd "$ext"
         [ -e Makefile ] || docker-php-ext-configure "$ext"
-        make
+        make -s -j`nproc`
         make install
         ini="/usr/local/etc/php/conf.d/docker-php-ext-$ext.ini"
         for module in modules/*.so; do

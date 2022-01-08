@@ -1,15 +1,13 @@
-FROM debian:jessie
+FROM debian:buster
 MAINTAINER https://github.com/helderco/
-
-# replace repository
-RUN sed -i "s#[a-z]\+.debian.org#mirrors.163.com#g" /etc/apt/sources.list
 
 # persistent / runtime deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
+      apt-utils \
       ca-certificates \
       curl \
       librecode0 \
-      libmysqlclient-dev \
+      default-libmysqlclient-dev \
       libsqlite3-0 \
       libxml2
 
@@ -22,28 +20,22 @@ RUN apt-get install -y --no-install-recommends \
       libc-dev \
       make \
       pkg-config \
-      re2c
+      re2c \
+      curl
 
 ENV PHP_INI_DIR /usr/local/etc/php
 RUN mkdir -p $PHP_INI_DIR/conf.d
 
-ENV GPG_KEYS 0B96609E270F565C13292B24C13C70B87267B52D 0A95E9A026542D53835E3F3A7DEC4E69FC9C83D7 0E604491
-RUN set -xe \
-  && for key in $GPG_KEYS; do \
-    gpg --keyserver ha.pool.sks-keyservers.net --recv-keys "$key"; \
-  done
 
 # compile openssl, otherwise --with-openssl won't work
-RUN OPENSSL_VERSION="1.0.2k" \
+RUN OPENSSL_VERSION="1.0.2u" \
+      && mkdir -p /tmp \
       && cd /tmp \
-      && mkdir openssl \
+      && mkdir openssl \ 
       && curl -sL "https://www.openssl.org/source/openssl-$OPENSSL_VERSION.tar.gz" -o openssl.tar.gz \
-      && curl -sL "https://www.openssl.org/source/openssl-$OPENSSL_VERSION.tar.gz.asc" -o openssl.tar.gz.asc \
-      && gpg --verify openssl.tar.gz.asc \
       && tar -xzf openssl.tar.gz -C openssl --strip-components=1 \
       && cd /tmp/openssl \
-      && ./config && make && make install \
-      && rm -rf /tmp/*
+      && ./config --prefix=/tmp/bin/openssl -shared && make -s -j`nproc` && make install
 
 ENV PHP_VERSION 5.3.29
 ENV PHP_FPM_CONF /usr/local/etc/php-fpm.d/www.conf
@@ -53,7 +45,7 @@ ENV PHP_INI_CONF /usr/local/etc/php/conf.d/php.ini
 # --enable-mysqlnd is included below because it's harder to compile after the fact the extensions are (since it's a plugin for several extensions, not an extension in itself)
 RUN buildDeps=" \
                 autoconf2.13 \
-                libcurl4-openssl-dev \
+                libcurl4-gnutls-dev \
                 libreadline6-dev \
                 librecode-dev \
                 libsqlite3-dev \
@@ -63,15 +55,16 @@ RUN buildDeps=" \
                 libmhash-dev \
       " \
       && set -x \
-      && apt-get install -y $buildDeps --no-install-recommends \
+      && apt-get install -y $buildDeps \
+      && ln -s /usr/include/x86_64-linux-gnu/curl /usr/local/include/curl \
       && curl -SL "http://php.net/get/php-$PHP_VERSION.tar.xz/from/this/mirror" -o php.tar.xz \
       && curl -SL "http://php.net/get/php-$PHP_VERSION.tar.xz.asc/from/this/mirror" -o php.tar.xz.asc \
-      && gpg --verify php.tar.xz.asc \
       && mkdir -p /usr/src/php \
       && tar -xof php.tar.xz -C /usr/src/php --strip-components=1 \
       && rm php.tar.xz* \
       && cd /usr/src/php \
       && ./configure \
+            --disable-shared \
             --with-config-file-path="$PHP_INI_DIR" \
             --with-config-file-scan-dir="$PHP_INI_DIR/conf.d" \
             --enable-fpm \
@@ -80,13 +73,17 @@ RUN buildDeps=" \
             --disable-cgi \
             --enable-mysqlnd \
             --with-mysql \
+            --with-mysqli=mysqlnd \
             --with-curl \
-            --with-openssl=/usr/local/ssl \
+            --with-openssl=/tmp/bin/openssl \
             --with-readline \
             --with-recode \
             --with-zlib \
             --with-mhash \
-      && make -j"$(nproc)" \
+            --enable-magic-quotes \
+            --enable-inline-optimization \
+            --enable-mbregex \
+      && make -s -j`nproc` \
       && make install \
       && { find /usr/local/bin /usr/local/sbin -type f -executable -exec strip --strip-all '{}' + || true; } \
       && apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false -o APT::AutoRemove::SuggestsImportant=false $buildDeps \
@@ -129,7 +126,6 @@ RUN set -ex \
 	            mcrypt \
 	            pcntl \
 	            pdo_mysql \
-	            mysqli \
 	            shmop \
 	            soap \
 	            sockets \
@@ -162,40 +158,7 @@ RUN set -ex \
 	&& phpize \
     	&& ./configure && make && make install \
     	&& rm -rf /tmp/redis-2.2.4* \
-    	&& echo 'extension="redis.so"' >> $PHP_INI_CONF \
-	\
-	&& cd /tmp \
-	&& git clone https://github.com/GXhua/php-connect-pool.git \
-	&& cd php-connect-pool \
-	&& phpize \
-    	&& ./configure && make && make install \
-    	&& rm -rf /tmp/php-connect-pool \
-    	&& echo 'extension="connect_pool.so"' >> $PHP_INI_CONF \
-	\
-    	&& cd /tmp \
-    	&& mkdir eaccelerator_cache \
-	&& chmod 777 eaccelerator_cache \
-	&& git clone https://github.com/eaccelerator/eaccelerator.git \
-	&& cd eaccelerator \
-	&& phpize \
-	&& ./configure --enable-eaccelerator=shared --with-php-config=/usr/local/bin/php-config && make && make install \
-	&& { \
-		echo '[eaccelerator]'; \
-        	echo 'extension="eaccelerator.so"'; \
-        	echo 'eaccelerator.cache_dir="/tmp/eaccelerator_cache"'; \
-        	echo 'eaccelerator.shm_size="0"'; \
-        	echo 'eaccelerator.enable="1"'; \
-        	echo 'eaccelerator.optimizer="1"'; \
-        	echo 'eaccelerator.check_mtime="1"'; \
-        	echo 'eaccelerator.debug="0"'; \
-        	echo 'eaccelerator.shm_max="0"'; \
-        	echo 'eaccelerator.shm_ttl="360"'; \
-        	echo 'eaccelerator.shm_prune_period="3600"'; \
-        	echo 'eaccelerator.shm_only="0"'; \
-        	echo 'eaccelerator.compress="1"'; \
-        	echo 'eaccelerator.compress_level="9"'; \
-	} | tee $PHP_INI_DIR/conf.d/eaccelerator.ini \
-	&& rm -rf /tmp/eaccelerator
+    	&& echo 'extension="redis.so"' >> $PHP_INI_CONF
 
 # php-fpm configuration
 RUN set -ex \
