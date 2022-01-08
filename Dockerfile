@@ -1,9 +1,6 @@
 FROM debian:jessie
 MAINTAINER https://github.com/helderco/
 
-# replace repository
-RUN sed -i "s#[a-z]\+.debian.org#mirrors.163.com#g" /etc/apt/sources.list
-
 # persistent / runtime deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates \
